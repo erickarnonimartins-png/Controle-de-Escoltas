@@ -1,33 +1,15 @@
 import streamlit as st
-from db import get_connection, init_db
+from db import get_connection
 
 st.set_page_config(page_title="Rotas", page_icon="🛣️")
-init_db()
 st.title("🛣️ Cadastro de Rotas")
-
 
 def carregar_rotas():
     conn = get_connection()
     cur = conn.cursor()
-    rows = cur.execute("""
-        SELECT id, nome_rota, origem, destino, valor_fixo_receber,
-               valor_fixo_pagar, observacao, ativa
-        FROM rotas
-        ORDER BY nome_rota
-    """).fetchall()
+    rows = cur.execute("SELECT id, nome_rota, origem, destino, valor_fixo_receber, valor_fixo_pagar, observacao, ativa FROM rotas ORDER BY nome_rota").fetchall()
     conn.close()
-
-    return [{
-        "id": row["id"],
-        "nome_rota": row["nome_rota"],
-        "origem": row["origem"] or "",
-        "destino": row["destino"] or "",
-        "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
-        "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
-        "observacao": row["observacao"] or "",
-        "ativa": row["ativa"],
-    } for row in rows]
-
+    return [{"id": row["id"], "nome_rota": row["nome_rota"], "origem": row["origem"] or "", "destino": row["destino"] or "", "valor_fixo_receber": float(row["valor_fixo_receber"] or 0), "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0), "observacao": row["observacao"] or "", "ativa": row["ativa"]} for row in rows]
 
 def contar_servicos_da_rota(rota_id):
     conn = get_connection()
@@ -36,10 +18,8 @@ def contar_servicos_da_rota(rota_id):
     conn.close()
     return int(row["total"] or 0)
 
-
 rotas = carregar_rotas()
 mapa_rotas = {r["id"]: r for r in rotas}
-
 ativas = sum(1 for r in rotas if r["ativa"] == 1)
 inativas = sum(1 for r in rotas if r["ativa"] == 0)
 
@@ -50,7 +30,6 @@ m3.metric("Inativas", inativas)
 
 st.divider()
 st.subheader("Nova rota")
-
 with st.form("form_nova_rota", clear_on_submit=True):
     nome_rota = st.text_input("Nome da rota")
     origem = st.text_input("Origem")
@@ -59,7 +38,6 @@ with st.form("form_nova_rota", clear_on_submit=True):
     valor_fixo_pagar = st.number_input("Valor fixo a pagar", min_value=0.0, step=10.0, format="%.2f")
     observacao = st.text_area("Observação")
     ativa = st.checkbox("Rota ativa", value=True)
-
     salvar = st.form_submit_button("Salvar rota")
     if salvar:
         if not nome_rota.strip():
@@ -67,16 +45,7 @@ with st.form("form_nova_rota", clear_on_submit=True):
         else:
             conn = get_connection()
             cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO rotas (
-                    nome_rota, origem, destino, valor_fixo_receber,
-                    valor_fixo_pagar, observacao, ativa
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (nome_rota.strip(), origem.strip(), destino.strip(), float(valor_fixo_receber), float(valor_fixo_pagar), observacao.strip(), 1 if ativa else 0)
-            )
+            cur.execute("INSERT INTO rotas (nome_rota, origem, destino, valor_fixo_receber, valor_fixo_pagar, observacao, ativa) VALUES (?, ?, ?, ?, ?, ?, ?)", (nome_rota.strip(), origem.strip(), destino.strip(), float(valor_fixo_receber), float(valor_fixo_pagar), observacao.strip(), 1 if ativa else 0))
             conn.commit()
             conn.close()
             st.success("Rota salva com sucesso.")
@@ -84,17 +53,11 @@ with st.form("form_nova_rota", clear_on_submit=True):
 
 st.divider()
 st.subheader("Gerenciar rota")
-
 if rotas:
     ids_rotas = [r["id"] for r in rotas]
-    rota_id_sel = st.selectbox(
-        "Escolha uma rota",
-        options=ids_rotas,
-        format_func=lambda rid: f'#{mapa_rotas[rid]["id"]} | {mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
-    )
+    rota_id_sel = st.selectbox("Escolha uma rota", options=ids_rotas, format_func=lambda rid: f'#{mapa_rotas[rid]["id"]} | {mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}')
     rota_sel = mapa_rotas[rota_id_sel]
     aba1, aba2 = st.tabs(["✏️ Editar", "🗑️ Excluir"])
-
     with aba1:
         with st.form(f"form_editar_rota_{rota_sel['id']}"):
             nome_rota_edit = st.text_input("Nome da rota", value=rota_sel["nome_rota"])
@@ -104,7 +67,6 @@ if rotas:
             valor_fixo_pagar_edit = st.number_input("Valor fixo a pagar", min_value=0.0, step=10.0, format="%.2f", value=float(rota_sel["valor_fixo_pagar"]))
             observacao_edit = st.text_area("Observação", value=rota_sel["observacao"])
             ativa_edit = st.checkbox("Rota ativa", value=(rota_sel["ativa"] == 1))
-
             salvar_edicao = st.form_submit_button("Salvar alterações")
             if salvar_edicao:
                 if not nome_rota_edit.strip():
@@ -112,21 +74,11 @@ if rotas:
                 else:
                     conn = get_connection()
                     cur = conn.cursor()
-                    cur.execute(
-                        """
-                        UPDATE rotas
-                        SET nome_rota = ?, origem = ?, destino = ?,
-                            valor_fixo_receber = ?, valor_fixo_pagar = ?,
-                            observacao = ?, ativa = ?
-                        WHERE id = ?
-                        """,
-                        (nome_rota_edit.strip(), origem_edit.strip(), destino_edit.strip(), float(valor_fixo_receber_edit), float(valor_fixo_pagar_edit), observacao_edit.strip(), 1 if ativa_edit else 0, rota_sel["id"])
-                    )
+                    cur.execute("UPDATE rotas SET nome_rota = ?, origem = ?, destino = ?, valor_fixo_receber = ?, valor_fixo_pagar = ?, observacao = ?, ativa = ? WHERE id = ?", (nome_rota_edit.strip(), origem_edit.strip(), destino_edit.strip(), float(valor_fixo_receber_edit), float(valor_fixo_pagar_edit), observacao_edit.strip(), 1 if ativa_edit else 0, rota_sel["id"]))
                     conn.commit()
                     conn.close()
                     st.success("Rota atualizada com sucesso.")
                     st.rerun()
-
     with aba2:
         qtd_servicos = contar_servicos_da_rota(rota_sel["id"])
         if qtd_servicos > 0:
@@ -160,19 +112,9 @@ else:
 
 st.divider()
 st.subheader("Rotas cadastradas")
-
 rotas = carregar_rotas()
 if rotas:
-    dados = [{
-        "ID": r["id"],
-        "Rota": r["nome_rota"],
-        "Origem": r["origem"],
-        "Destino": r["destino"],
-        "Recebo Fixo": f'R$ {r["valor_fixo_receber"]:.2f}',
-        "Pago Fixo": f'R$ {r["valor_fixo_pagar"]:.2f}',
-        "Observação": r["observacao"],
-        "Status": "Ativa" if r["ativa"] == 1 else "Inativa"
-    } for r in rotas]
+    dados = [{"ID": r["id"], "Rota": r["nome_rota"], "Origem": r["origem"], "Destino": r["destino"], "Recebo Fixo": f'R$ {r["valor_fixo_receber"]:.2f}', "Pago Fixo": f'R$ {r["valor_fixo_pagar"]:.2f}', "Observação": r["observacao"], "Status": "Ativa" if r["ativa"] == 1 else "Inativa"} for r in rotas]
     st.dataframe(dados, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhuma rota cadastrada ainda.")
