@@ -3,9 +3,12 @@ import pandas as pd
 from io import BytesIO
 from db import get_connection, init_db
 from datetime import datetime, timedelta, date
+from auth import exigir_login, menu_lateral, is_admin
 
 st.set_page_config(page_title="Lançamentos", page_icon="📝")
 init_db()
+exigir_login()
+menu_lateral()
 st.title("📝 Lançamento de Serviços")
 
 
@@ -224,22 +227,28 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
 
     with col1:
         data_servico = st.date_input("Data do serviço", value=date.today())
-        rota_id = st.selectbox(
-            "Rota",
-            options=ids_rotas_ativas,
-            format_func=lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
-        )
+
+        if is_admin():
+            texto_rota = lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
+        else:
+            texto_rota = lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
+
+        rota_id = st.selectbox("Rota", options=ids_rotas_ativas, format_func=texto_rota)
         agente_id = st.selectbox("Agente", options=ids_agentes_ativos, format_func=lambda aid: mapa_agentes[aid]["nome"])
         placa_caminhao = st.text_input("Placa do caminhão")
 
     with col2:
         hora_inicial = st.time_input("Hora inicial")
         hora_final = st.time_input("Hora final")
-        valor_extra_recebido = st.number_input("Valor extra recebido", min_value=0.0, step=10.0, format="%.2f")
-        pedagio_km_extra = st.number_input("Pedágio/KM extra", min_value=0.0, step=10.0, format="%.2f")
+        if is_admin():
+            valor_extra_recebido = st.number_input("Valor extra recebido", min_value=0.0, step=10.0, format="%.2f")
+            pedagio_km_extra = st.number_input("Pedágio/KM extra", min_value=0.0, step=10.0, format="%.2f")
+        else:
+            valor_extra_recebido = 0.0
+            pedagio_km_extra = 0.0
+            st.info("Valores de recebimento serão preenchidos depois pelo administrador.")
 
     observacao = st.text_area("Observação")
-
     col3, col4, col5 = st.columns(3)
     with col3:
         status_pagamento = st.selectbox("Status do pagamento", ["pendente", "pago"])
@@ -257,11 +266,16 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
     lucro = total_receber - total_pagar
 
     st.subheader("Resumo do lançamento")
-    r1, r2, r3, r4 = st.columns(4)
-    r1.metric("Total de horas", f"{total_horas:.2f} h")
-    r2.metric("Total a receber", f"R$ {total_receber:.2f}")
-    r3.metric("Total a pagar", f"R$ {total_pagar:.2f}")
-    r4.metric("Lucro", f"R$ {lucro:.2f}")
+    if is_admin():
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Total de horas", f"{total_horas:.2f} h")
+        r2.metric("Total a receber", f"R$ {total_receber:.2f}")
+        r3.metric("Total a pagar", f"R$ {total_pagar:.2f}")
+        r4.metric("Lucro", f"R$ {lucro:.2f}")
+    else:
+        r1, r2 = st.columns(2)
+        r1.metric("Total de horas", f"{total_horas:.2f} h")
+        r2.metric("Total a pagar", f"R$ {total_pagar:.2f}")
 
     salvar = st.form_submit_button("Salvar lançamento")
     if salvar:
@@ -283,7 +297,7 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
                 valor_fixo_pagar, float(valor_extra_recebido), float(pedagio_km_extra),
                 total_receber, total_pagar, lucro, observacao.strip(), status_pagamento,
                 str(data_pagamento) if status_pagamento == "pago" else None,
-                forma_pagamento if status_pagamento == "pago" else None
+                forma_pagamento if status_pagamento == "pago" else None,
             ),
         )
         conn.commit()
@@ -315,30 +329,28 @@ if servicos:
 
         with st.form(f"form_editar_{servico_sel['id']}"):
             c1, c2 = st.columns(2)
-
             with c1:
                 data_edit = st.date_input("Data do serviço", value=parse_date(servico_sel["data_servico"]))
-                rota_edit_id = st.selectbox(
-                    "Rota",
-                    options=ids_rotas,
-                    index=idx_rota,
-                    format_func=lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}',
-                    key=f"rota_edit_{servico_sel['id']}"
-                )
-                agente_edit_id = st.selectbox(
-                    "Agente",
-                    options=ids_agentes,
-                    index=idx_agente,
-                    format_func=lambda aid: mapa_agentes[aid]["nome"],
-                    key=f"agente_edit_{servico_sel['id']}"
-                )
+
+                if is_admin():
+                    texto_rota_edit = lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
+                else:
+                    texto_rota_edit = lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
+
+                rota_edit_id = st.selectbox("Rota", options=ids_rotas, index=idx_rota, format_func=texto_rota_edit, key=f"rota_edit_{servico_sel['id']}")
+                agente_edit_id = st.selectbox("Agente", options=ids_agentes, index=idx_agente, format_func=lambda aid: mapa_agentes[aid]["nome"], key=f"agente_edit_{servico_sel['id']}")
                 placa_edit = st.text_input("Placa do caminhão", value=servico_sel["placa_caminhao"] or "")
 
             with c2:
                 hora_inicial_edit = st.time_input("Hora inicial", value=parse_time(servico_sel["hora_inicial"]))
                 hora_final_edit = st.time_input("Hora final", value=parse_time(servico_sel["hora_final"]))
-                valor_extra_edit = st.number_input("Valor extra recebido", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["valor_extra_recebido"] or 0))
-                pedagio_edit = st.number_input("Pedágio/KM extra", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["pedagio_km_extra"] or 0))
+                if is_admin():
+                    valor_extra_edit = st.number_input("Valor extra recebido", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["valor_extra_recebido"] or 0))
+                    pedagio_edit = st.number_input("Pedágio/KM extra", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["pedagio_km_extra"] or 0))
+                else:
+                    valor_extra_edit = float(servico_sel["valor_extra_recebido"] or 0)
+                    pedagio_edit = float(servico_sel["pedagio_km_extra"] or 0)
+                    st.info("Somente o administrador altera valores de recebimento.")
 
             observacao_edit = st.text_area("Observação", value=servico_sel["observacao"] or "")
 
@@ -362,11 +374,16 @@ if servicos:
             lucro_edit = total_receber_edit - total_pagar_edit
 
             st.subheader("Resumo da edição")
-            e1, e2, e3, e4 = st.columns(4)
-            e1.metric("Total de horas", f"{total_horas_edit:.2f} h")
-            e2.metric("Total a receber", f"R$ {total_receber_edit:.2f}")
-            e3.metric("Total a pagar", f"R$ {total_pagar_edit:.2f}")
-            e4.metric("Lucro", f"R$ {lucro_edit:.2f}")
+            if is_admin():
+                e1, e2, e3, e4 = st.columns(4)
+                e1.metric("Total de horas", f"{total_horas_edit:.2f} h")
+                e2.metric("Total a receber", f"R$ {total_receber_edit:.2f}")
+                e3.metric("Total a pagar", f"R$ {total_pagar_edit:.2f}")
+                e4.metric("Lucro", f"R$ {lucro_edit:.2f}")
+            else:
+                e1, e2 = st.columns(2)
+                e1.metric("Total de horas", f"{total_horas_edit:.2f} h")
+                e2.metric("Total a pagar", f"R$ {total_pagar_edit:.2f}")
 
             salvar_edicao = st.form_submit_button("Salvar alterações")
             if salvar_edicao:
@@ -383,12 +400,13 @@ if servicos:
                     WHERE id = ?
                     """,
                     (
-                        str(data_edit), rota_edit_id, agente_edit_id, placa_edit.strip(), str(hora_inicial_edit),
-                        str(hora_final_edit), total_horas_edit, valor_fixo_receber_edit, valor_fixo_pagar_edit,
-                        float(valor_extra_edit), float(pedagio_edit), total_receber_edit, total_pagar_edit,
-                        lucro_edit, observacao_edit.strip(), status_edit,
+                        str(data_edit), rota_edit_id, agente_edit_id, placa_edit.strip(),
+                        str(hora_inicial_edit), str(hora_final_edit), total_horas_edit,
+                        valor_fixo_receber_edit, valor_fixo_pagar_edit, float(valor_extra_edit),
+                        float(pedagio_edit), total_receber_edit, total_pagar_edit, lucro_edit,
+                        observacao_edit.strip(), status_edit,
                         str(data_pagamento_edit) if status_edit == "pago" else None,
-                        forma_pagamento_edit if status_edit == "pago" else None, servico_sel["id"]
+                        forma_pagamento_edit if status_edit == "pago" else None, servico_sel["id"],
                     ),
                 )
                 conn.commit()
@@ -432,9 +450,9 @@ if servicos:
                     (
                         str(nova_data), servico_sel["rota_id"], servico_sel["agente_id"],
                         (servico_sel["placa_caminhao"] or "").strip(), str(hora_inicial_dup),
-                        str(hora_final_dup), total_horas_dup, valor_fixo_receber_dup, valor_fixo_pagar_dup,
-                        valor_extra_dup, pedagio_dup, total_receber_dup, total_pagar_dup, lucro_dup,
-                        (obs_dup or "").strip(), "pendente", None, None
+                        str(hora_final_dup), total_horas_dup, valor_fixo_receber_dup,
+                        valor_fixo_pagar_dup, valor_extra_dup, pedagio_dup, total_receber_dup,
+                        total_pagar_dup, lucro_dup, (obs_dup or "").strip(), "pendente", None, None,
                     ),
                 )
                 conn.commit()
@@ -443,7 +461,7 @@ if servicos:
                 st.rerun()
 
     with aba3:
-        st.warning("A exclusão apaga esse lançamento do banco.")
+        st.warning("A exclusão apaga esse lançamento do banco de dados.")
         with st.form(f"form_excluir_{servico_sel['id']}"):
             confirmar = st.checkbox(f'Confirmo excluir o lançamento #{servico_sel["id"]}')
             excluir = st.form_submit_button("Excluir lançamento")
@@ -528,37 +546,50 @@ st.subheader("Resultados da consulta")
 
 if servicos_filtrados:
     total_registros = len(servicos_filtrados)
-    total_receber_filtro = sum(s["total_receber"] for s in servicos_filtrados)
     total_pagar_filtro = sum(s["total_pagar"] for s in servicos_filtrados)
-    lucro_filtro = sum(s["lucro"] for s in servicos_filtrados)
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Registros", total_registros)
-    k2.metric("Total a receber", f"R$ {total_receber_filtro:.2f}")
-    k3.metric("Total a pagar", f"R$ {total_pagar_filtro:.2f}")
-    k4.metric("Lucro", f"R$ {lucro_filtro:.2f}")
+    if is_admin():
+        total_receber_filtro = sum(s["total_receber"] for s in servicos_filtrados)
+        lucro_filtro = sum(s["lucro"] for s in servicos_filtrados)
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Registros", total_registros)
+        k2.metric("Total a receber", f"R$ {total_receber_filtro:.2f}")
+        k3.metric("Total a pagar", f"R$ {total_pagar_filtro:.2f}")
+        k4.metric("Lucro", f"R$ {lucro_filtro:.2f}")
+    else:
+        k1, k2 = st.columns(2)
+        k1.metric("Registros", total_registros)
+        k2.metric("Total a pagar", f"R$ {total_pagar_filtro:.2f}")
 
-    dados = [{
-        "ID": s["id"],
-        "Data": s["data_servico"],
-        "Rota": s["nome_rota"],
-        "Agente": s["nome_agente"],
-        "Placa": s["placa_caminhao"],
-        "Hora Inicial": s["hora_inicial"],
-        "Hora Final": s["hora_final"],
-        "Horas": s["total_horas"],
-        "Recebo Fixo": f'R$ {s["valor_fixo_receber"]:.2f}',
-        "Pago Fixo": f'R$ {s["valor_fixo_pagar"]:.2f}',
-        "Extra": f'R$ {s["valor_extra_recebido"]:.2f}',
-        "Pedágio/KM": f'R$ {s["pedagio_km_extra"]:.2f}',
-        "Total Receber": f'R$ {s["total_receber"]:.2f}',
-        "Total Pagar": f'R$ {s["total_pagar"]:.2f}',
-        "Lucro": f'R$ {s["lucro"]:.2f}',
-        "Pagamento": texto_status(s["status_pagamento"]),
-        "Data Pagamento": s["data_pagamento"],
-        "Forma Pagamento": s["forma_pagamento"],
-        "Observação": s["observacao"],
-    } for s in servicos_filtrados]
+    dados = []
+    for s in servicos_filtrados:
+        base = {
+            "ID": s["id"],
+            "Data": s["data_servico"],
+            "Rota": s["nome_rota"],
+            "Agente": s["nome_agente"],
+            "Placa": s["placa_caminhao"],
+            "Hora Inicial": s["hora_inicial"],
+            "Hora Final": s["hora_final"],
+            "Horas": s["total_horas"],
+            "Pago Fixo": f'R$ {s["valor_fixo_pagar"]:.2f}',
+            "Total Pagar": f'R$ {s["total_pagar"]:.2f}',
+            "Pagamento": texto_status(s["status_pagamento"]),
+            "Data Pagamento": s["data_pagamento"],
+            "Forma Pagamento": s["forma_pagamento"],
+            "Observação": s["observacao"],
+        }
+
+        if is_admin():
+            base.update({
+                "Recebo Fixo": f'R$ {s["valor_fixo_receber"]:.2f}',
+                "Extra Recebido": f'R$ {s["valor_extra_recebido"]:.2f}',
+                "Pedágio/KM": f'R$ {s["pedagio_km_extra"]:.2f}',
+                "Total Receber": f'R$ {s["total_receber"]:.2f}',
+                "Lucro": f'R$ {s["lucro"]:.2f}',
+            })
+
+        dados.append(base)
 
     st.dataframe(dados, use_container_width=True, hide_index=True)
     df_exportacao = pd.DataFrame(dados)
