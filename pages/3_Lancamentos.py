@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from db import get_connection
+from db import get_connection, init_db
 from datetime import datetime, timedelta, date
 
-
 st.set_page_config(page_title="Lançamentos", page_icon="📝")
+init_db()
 st.title("📝 Lançamento de Serviços")
 
 
@@ -18,20 +18,15 @@ def gerar_excel_lancamentos(df):
 
 
 def texto_status(status):
-    if status == "pago":
-        return "🟢 Pago"
-    return "🔴 Pendente"
+    return "🟢 Pago" if status == "pago" else "🔴 Pendente"
 
 
 def calcular_total_horas(data_servico, hora_inicial, hora_final):
     inicio_dt = datetime.combine(data_servico, hora_inicial)
     fim_dt = datetime.combine(data_servico, hora_final)
-
     if fim_dt < inicio_dt:
         fim_dt += timedelta(days=1)
-
-    diferenca = fim_dt - inicio_dt
-    return round(diferenca.total_seconds() / 3600, 2)
+    return round((fim_dt - inicio_dt).total_seconds() / 3600, 2)
 
 
 def parse_date(valor):
@@ -43,31 +38,35 @@ def parse_date(valor):
 def parse_time(valor):
     if not valor:
         return datetime.strptime("00:00", "%H:%M").time()
-
     texto = str(valor)
     if len(texto) == 8:
         return datetime.strptime(texto, "%H:%M:%S").time()
     return datetime.strptime(texto, "%H:%M").time()
 
 
+def marcar_lancamento_como_pago(servico_id, data_pagamento, forma_pagamento):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE servicos
+        SET status_pagamento = 'pago',
+            data_pagamento = ?,
+            forma_pagamento = ?
+        WHERE id = ?
+        """,
+        (str(data_pagamento), forma_pagamento, servico_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def carregar_agentes():
     conn = get_connection()
     cur = conn.cursor()
-    rows = cur.execute("""
-        SELECT id, nome, ativo
-        FROM agentes
-        ORDER BY nome
-    """).fetchall()
+    rows = cur.execute("SELECT id, nome, ativo FROM agentes ORDER BY nome").fetchall()
     conn.close()
-
-    return [
-        {
-            "id": row["id"],
-            "nome": row["nome"],
-            "ativo": row["ativo"],
-        }
-        for row in rows
-    ]
+    return [{"id": row["id"], "nome": row["nome"], "ativo": row["ativo"]} for row in rows]
 
 
 def carregar_rotas():
@@ -79,19 +78,15 @@ def carregar_rotas():
         ORDER BY nome_rota
     """).fetchall()
     conn.close()
-
-    return [
-        {
-            "id": row["id"],
-            "nome_rota": row["nome_rota"],
-            "origem": row["origem"],
-            "destino": row["destino"],
-            "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
-            "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
-            "ativa": row["ativa"],
-        }
-        for row in rows
-    ]
+    return [{
+        "id": row["id"],
+        "nome_rota": row["nome_rota"],
+        "origem": row["origem"],
+        "destino": row["destino"],
+        "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
+        "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
+        "ativa": row["ativa"],
+    } for row in rows]
 
 
 def carregar_servicos():
@@ -99,97 +94,61 @@ def carregar_servicos():
     cur = conn.cursor()
     rows = cur.execute("""
         SELECT
-            s.id,
-            s.data_servico,
-            s.rota_id,
-            s.agente_id,
-            s.placa_caminhao,
-            s.hora_inicial,
-            s.hora_final,
-            s.total_horas,
-            s.valor_fixo_receber,
-            s.valor_fixo_pagar,
-            s.valor_extra_recebido,
-            s.pedagio_km_extra,
-            s.total_receber,
-            s.total_pagar,
-            s.lucro,
-            s.observacao,
-            s.status_pagamento,
-            s.data_pagamento,
-            s.forma_pagamento,
-            r.nome_rota,
-            a.nome AS nome_agente
+            s.id, s.data_servico, s.rota_id, s.agente_id, s.placa_caminhao,
+            s.hora_inicial, s.hora_final, s.total_horas, s.valor_fixo_receber,
+            s.valor_fixo_pagar, s.valor_extra_recebido, s.pedagio_km_extra,
+            s.total_receber, s.total_pagar, s.lucro, s.observacao,
+            s.status_pagamento, s.data_pagamento, s.forma_pagamento,
+            r.nome_rota, a.nome AS nome_agente
         FROM servicos s
         INNER JOIN rotas r ON s.rota_id = r.id
         INNER JOIN agentes a ON s.agente_id = a.id
         ORDER BY s.data_servico DESC, s.id DESC
     """).fetchall()
     conn.close()
-
-    return [
-        {
-            "id": row["id"],
-            "data_servico": row["data_servico"],
-            "rota_id": row["rota_id"],
-            "agente_id": row["agente_id"],
-            "placa_caminhao": row["placa_caminhao"],
-            "hora_inicial": row["hora_inicial"],
-            "hora_final": row["hora_final"],
-            "total_horas": float(row["total_horas"] or 0),
-            "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
-            "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
-            "valor_extra_recebido": float(row["valor_extra_recebido"] or 0),
-            "pedagio_km_extra": float(row["pedagio_km_extra"] or 0),
-            "total_receber": float(row["total_receber"] or 0),
-            "total_pagar": float(row["total_pagar"] or 0),
-            "lucro": float(row["lucro"] or 0),
-            "observacao": row["observacao"],
-            "status_pagamento": row["status_pagamento"],
-            "data_pagamento": row["data_pagamento"],
-            "forma_pagamento": row["forma_pagamento"],
-            "nome_rota": row["nome_rota"],
-            "nome_agente": row["nome_agente"],
-        }
-        for row in rows
-    ]
+    return [{
+        "id": row["id"],
+        "data_servico": row["data_servico"],
+        "rota_id": row["rota_id"],
+        "agente_id": row["agente_id"],
+        "placa_caminhao": row["placa_caminhao"],
+        "hora_inicial": row["hora_inicial"],
+        "hora_final": row["hora_final"],
+        "total_horas": float(row["total_horas"] or 0),
+        "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
+        "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
+        "valor_extra_recebido": float(row["valor_extra_recebido"] or 0),
+        "pedagio_km_extra": float(row["pedagio_km_extra"] or 0),
+        "total_receber": float(row["total_receber"] or 0),
+        "total_pagar": float(row["total_pagar"] or 0),
+        "lucro": float(row["lucro"] or 0),
+        "observacao": row["observacao"],
+        "status_pagamento": row["status_pagamento"],
+        "data_pagamento": row["data_pagamento"],
+        "forma_pagamento": row["forma_pagamento"],
+        "nome_rota": row["nome_rota"],
+        "nome_agente": row["nome_agente"],
+    } for row in rows]
 
 
 def buscar_servicos_filtrados(mes, ano, agente_id=None, rota_id=None, status_pagamento=None, placa=None):
     conn = get_connection()
     cur = conn.cursor()
-
     competencia = f"{ano}-{mes:02d}"
 
     sql = """
         SELECT
-            s.id,
-            s.data_servico,
-            s.rota_id,
-            s.agente_id,
-            s.placa_caminhao,
-            s.hora_inicial,
-            s.hora_final,
-            s.total_horas,
-            s.valor_fixo_receber,
-            s.valor_fixo_pagar,
-            s.valor_extra_recebido,
-            s.pedagio_km_extra,
-            s.total_receber,
-            s.total_pagar,
-            s.lucro,
-            s.observacao,
-            s.status_pagamento,
-            s.data_pagamento,
-            s.forma_pagamento,
-            r.nome_rota,
-            a.nome AS nome_agente
+            s.id, s.data_servico, s.rota_id, s.agente_id, s.placa_caminhao,
+            s.hora_inicial, s.hora_final, s.total_horas, s.valor_fixo_receber,
+            s.valor_fixo_pagar, s.valor_extra_recebido, s.pedagio_km_extra,
+            s.total_receber, s.total_pagar, s.lucro, s.observacao,
+            s.status_pagamento, s.data_pagamento, s.forma_pagamento,
+            r.nome_rota, a.nome AS nome_agente
         FROM servicos s
         INNER JOIN rotas r ON s.rota_id = r.id
         INNER JOIN agentes a ON s.agente_id = a.id
         WHERE substr(s.data_servico, 1, 7) = ?
     """
-
     params = [competencia]
 
     if agente_id:
@@ -209,36 +168,32 @@ def buscar_servicos_filtrados(mes, ano, agente_id=None, rota_id=None, status_pag
         params.append(f"%{placa.strip().upper()}%")
 
     sql += " ORDER BY s.data_servico DESC, s.id DESC"
-
     rows = cur.execute(sql, params).fetchall()
     conn.close()
 
-    return [
-        {
-            "id": row["id"],
-            "data_servico": row["data_servico"],
-            "rota_id": row["rota_id"],
-            "agente_id": row["agente_id"],
-            "placa_caminhao": row["placa_caminhao"],
-            "hora_inicial": row["hora_inicial"],
-            "hora_final": row["hora_final"],
-            "total_horas": float(row["total_horas"] or 0),
-            "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
-            "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
-            "valor_extra_recebido": float(row["valor_extra_recebido"] or 0),
-            "pedagio_km_extra": float(row["pedagio_km_extra"] or 0),
-            "total_receber": float(row["total_receber"] or 0),
-            "total_pagar": float(row["total_pagar"] or 0),
-            "lucro": float(row["lucro"] or 0),
-            "observacao": row["observacao"],
-            "status_pagamento": row["status_pagamento"],
-            "data_pagamento": row["data_pagamento"],
-            "forma_pagamento": row["forma_pagamento"],
-            "nome_rota": row["nome_rota"],
-            "nome_agente": row["nome_agente"],
-        }
-        for row in rows
-    ]
+    return [{
+        "id": row["id"],
+        "data_servico": row["data_servico"],
+        "rota_id": row["rota_id"],
+        "agente_id": row["agente_id"],
+        "placa_caminhao": row["placa_caminhao"],
+        "hora_inicial": row["hora_inicial"],
+        "hora_final": row["hora_final"],
+        "total_horas": float(row["total_horas"] or 0),
+        "valor_fixo_receber": float(row["valor_fixo_receber"] or 0),
+        "valor_fixo_pagar": float(row["valor_fixo_pagar"] or 0),
+        "valor_extra_recebido": float(row["valor_extra_recebido"] or 0),
+        "pedagio_km_extra": float(row["pedagio_km_extra"] or 0),
+        "total_receber": float(row["total_receber"] or 0),
+        "total_pagar": float(row["total_pagar"] or 0),
+        "lucro": float(row["lucro"] or 0),
+        "observacao": row["observacao"],
+        "status_pagamento": row["status_pagamento"],
+        "data_pagamento": row["data_pagamento"],
+        "forma_pagamento": row["forma_pagamento"],
+        "nome_rota": row["nome_rota"],
+        "nome_agente": row["nome_agente"],
+    } for row in rows]
 
 
 agentes = carregar_agentes()
@@ -260,11 +215,7 @@ mapa_agentes = {a["id"]: a for a in agentes}
 mapa_rotas = {r["id"]: r for r in rotas}
 mapa_servicos = {s["id"]: s for s in servicos}
 
-# =========================================================
-# NOVO LANÇAMENTO
-# =========================================================
 st.subheader("Novo lançamento")
-
 ids_rotas_ativas = [r["id"] for r in rotas_ativas]
 ids_agentes_ativos = [a["id"] for a in agentes_ativos]
 
@@ -273,19 +224,12 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
 
     with col1:
         data_servico = st.date_input("Data do serviço", value=date.today())
-
         rota_id = st.selectbox(
             "Rota",
             options=ids_rotas_ativas,
             format_func=lambda rid: f'{mapa_rotas[rid]["nome_rota"]} | Recebo: R$ {mapa_rotas[rid]["valor_fixo_receber"]:.2f} | Pago: R$ {mapa_rotas[rid]["valor_fixo_pagar"]:.2f}'
         )
-
-        agente_id = st.selectbox(
-            "Agente",
-            options=ids_agentes_ativos,
-            format_func=lambda aid: mapa_agentes[aid]["nome"]
-        )
-
+        agente_id = st.selectbox("Agente", options=ids_agentes_ativos, format_func=lambda aid: mapa_agentes[aid]["nome"])
         placa_caminhao = st.text_input("Placa do caminhão")
 
     with col2:
@@ -297,18 +241,14 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
     observacao = st.text_area("Observação")
 
     col3, col4, col5 = st.columns(3)
-
     with col3:
         status_pagamento = st.selectbox("Status do pagamento", ["pendente", "pago"])
-
     with col4:
         data_pagamento = st.date_input("Data do pagamento", value=date.today())
-
     with col5:
         forma_pagamento = st.selectbox("Forma de pagamento", ["", "pix", "dinheiro", "transferência", "outro"])
 
     rota = mapa_rotas[rota_id]
-
     total_horas = calcular_total_horas(data_servico, hora_inicial, hora_final)
     valor_fixo_receber = float(rota["valor_fixo_receber"])
     valor_fixo_pagar = float(rota["valor_fixo_pagar"])
@@ -324,81 +264,52 @@ with st.form("form_novo_lancamento", clear_on_submit=True):
     r4.metric("Lucro", f"R$ {lucro:.2f}")
 
     salvar = st.form_submit_button("Salvar lançamento")
-
     if salvar:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO servicos (
-                data_servico,
-                rota_id,
-                agente_id,
-                placa_caminhao,
-                hora_inicial,
-                hora_final,
-                total_horas,
-                valor_fixo_receber,
-                valor_fixo_pagar,
-                valor_extra_recebido,
-                pedagio_km_extra,
-                total_receber,
-                total_pagar,
-                lucro,
-                observacao,
-                status_pagamento,
-                data_pagamento,
-                forma_pagamento
+                data_servico, rota_id, agente_id, placa_caminhao, hora_inicial, hora_final,
+                total_horas, valor_fixo_receber, valor_fixo_pagar, valor_extra_recebido,
+                pedagio_km_extra, total_receber, total_pagar, lucro, observacao,
+                status_pagamento, data_pagamento, forma_pagamento
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            str(data_servico),
-            rota_id,
-            agente_id,
-            placa_caminhao.strip(),
-            str(hora_inicial),
-            str(hora_final),
-            total_horas,
-            valor_fixo_receber,
-            valor_fixo_pagar,
-            float(valor_extra_recebido),
-            float(pedagio_km_extra),
-            total_receber,
-            total_pagar,
-            lucro,
-            observacao.strip(),
-            status_pagamento,
-            str(data_pagamento) if status_pagamento == "pago" else None,
-            forma_pagamento if status_pagamento == "pago" else None
-        ))
+            """,
+            (
+                str(data_servico), rota_id, agente_id, placa_caminhao.strip(),
+                str(hora_inicial), str(hora_final), total_horas, valor_fixo_receber,
+                valor_fixo_pagar, float(valor_extra_recebido), float(pedagio_km_extra),
+                total_receber, total_pagar, lucro, observacao.strip(), status_pagamento,
+                str(data_pagamento) if status_pagamento == "pago" else None,
+                forma_pagamento if status_pagamento == "pago" else None
+            ),
+        )
         conn.commit()
         conn.close()
         st.success("Lançamento salvo com sucesso.")
         st.rerun()
 
 st.divider()
-
-# =========================================================
-# EDITAR / DUPLICAR / EXCLUIR
-# =========================================================
 st.subheader("Gerenciar lançamento existente")
 
 if servicos:
     ids_servicos = [s["id"] for s in servicos]
-
     servico_id = st.selectbox(
         "Escolha um lançamento",
         options=ids_servicos,
-        format_func=lambda sid: f'#{mapa_servicos[sid]["id"]} | {mapa_servicos[sid]["data_servico"]} | {mapa_servicos[sid]["nome_rota"]} | {mapa_servicos[sid]["nome_agente"]} | {mapa_servicos[sid]["placa_caminhao"] or "-"}'
+        format_func=lambda sid: f'#{mapa_servicos[sid]["id"]} | {mapa_servicos[sid]["data_servico"]} | {mapa_servicos[sid]["nome_rota"]} | {mapa_servicos[sid]["nome_agente"]} | {mapa_servicos[sid]["placa_caminhao"] or "-"} | {texto_status(mapa_servicos[sid]["status_pagamento"])}'
     )
-
     servico_sel = mapa_servicos[servico_id]
 
-    aba1, aba2, aba3 = st.tabs(["✏️ Editar", "📄 Duplicar", "🗑️ Excluir"])
+    st.info(f'Lançamento selecionado: #{servico_sel["id"]} | {servico_sel["nome_agente"]} | {servico_sel["nome_rota"]} | {texto_status(servico_sel["status_pagamento"])}')
+
+    aba1, aba2, aba3, aba4 = st.tabs(["✏️ Editar", "📄 Duplicar", "🗑️ Excluir", "💰 Marcar como pago"])
 
     with aba1:
         ids_rotas = [r["id"] for r in rotas]
         ids_agentes = [a["id"] for a in agentes]
-
         idx_rota = ids_rotas.index(servico_sel["rota_id"]) if servico_sel["rota_id"] in ids_rotas else 0
         idx_agente = ids_agentes.index(servico_sel["agente_id"]) if servico_sel["agente_id"] in ids_agentes else 0
 
@@ -426,47 +337,23 @@ if servicos:
             with c2:
                 hora_inicial_edit = st.time_input("Hora inicial", value=parse_time(servico_sel["hora_inicial"]))
                 hora_final_edit = st.time_input("Hora final", value=parse_time(servico_sel["hora_final"]))
-                valor_extra_edit = st.number_input(
-                    "Valor extra recebido",
-                    min_value=0.0,
-                    step=10.0,
-                    format="%.2f",
-                    value=float(servico_sel["valor_extra_recebido"] or 0)
-                )
-                pedagio_edit = st.number_input(
-                    "Pedágio/KM extra",
-                    min_value=0.0,
-                    step=10.0,
-                    format="%.2f",
-                    value=float(servico_sel["pedagio_km_extra"] or 0)
-                )
+                valor_extra_edit = st.number_input("Valor extra recebido", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["valor_extra_recebido"] or 0))
+                pedagio_edit = st.number_input("Pedágio/KM extra", min_value=0.0, step=10.0, format="%.2f", value=float(servico_sel["pedagio_km_extra"] or 0))
 
             observacao_edit = st.text_area("Observação", value=servico_sel["observacao"] or "")
 
             c3, c4, c5 = st.columns(3)
-
             with c3:
-                status_edit = st.selectbox(
-                    "Status do pagamento",
-                    ["pendente", "pago"],
-                    index=0 if servico_sel["status_pagamento"] == "pendente" else 1
-                )
-
+                status_edit = st.selectbox("Status do pagamento", ["pendente", "pago"], index=0 if servico_sel["status_pagamento"] == "pendente" else 1)
             with c4:
                 data_pagamento_padrao = parse_date(servico_sel["data_pagamento"]) if servico_sel["data_pagamento"] else date.today()
                 data_pagamento_edit = st.date_input("Data do pagamento", value=data_pagamento_padrao)
-
             with c5:
                 formas = ["", "pix", "dinheiro", "transferência", "outro"]
                 forma_atual = servico_sel["forma_pagamento"] if servico_sel["forma_pagamento"] in formas else ""
-                forma_pagamento_edit = st.selectbox(
-                    "Forma de pagamento",
-                    formas,
-                    index=formas.index(forma_atual)
-                )
+                forma_pagamento_edit = st.selectbox("Forma de pagamento", formas, index=formas.index(forma_atual))
 
             rota_edit = mapa_rotas[rota_edit_id]
-
             total_horas_edit = calcular_total_horas(data_edit, hora_inicial_edit, hora_final_edit)
             valor_fixo_receber_edit = float(rota_edit["valor_fixo_receber"])
             valor_fixo_pagar_edit = float(rota_edit["valor_fixo_pagar"])
@@ -482,53 +369,28 @@ if servicos:
             e4.metric("Lucro", f"R$ {lucro_edit:.2f}")
 
             salvar_edicao = st.form_submit_button("Salvar alterações")
-
             if salvar_edicao:
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE servicos
-                    SET
-                        data_servico = ?,
-                        rota_id = ?,
-                        agente_id = ?,
-                        placa_caminhao = ?,
-                        hora_inicial = ?,
-                        hora_final = ?,
-                        total_horas = ?,
-                        valor_fixo_receber = ?,
-                        valor_fixo_pagar = ?,
-                        valor_extra_recebido = ?,
-                        pedagio_km_extra = ?,
-                        total_receber = ?,
-                        total_pagar = ?,
-                        lucro = ?,
-                        observacao = ?,
-                        status_pagamento = ?,
-                        data_pagamento = ?,
-                        forma_pagamento = ?
+                    SET data_servico = ?, rota_id = ?, agente_id = ?, placa_caminhao = ?,
+                        hora_inicial = ?, hora_final = ?, total_horas = ?, valor_fixo_receber = ?,
+                        valor_fixo_pagar = ?, valor_extra_recebido = ?, pedagio_km_extra = ?,
+                        total_receber = ?, total_pagar = ?, lucro = ?, observacao = ?,
+                        status_pagamento = ?, data_pagamento = ?, forma_pagamento = ?
                     WHERE id = ?
-                """, (
-                    str(data_edit),
-                    rota_edit_id,
-                    agente_edit_id,
-                    placa_edit.strip(),
-                    str(hora_inicial_edit),
-                    str(hora_final_edit),
-                    total_horas_edit,
-                    valor_fixo_receber_edit,
-                    valor_fixo_pagar_edit,
-                    float(valor_extra_edit),
-                    float(pedagio_edit),
-                    total_receber_edit,
-                    total_pagar_edit,
-                    lucro_edit,
-                    observacao_edit.strip(),
-                    status_edit,
-                    str(data_pagamento_edit) if status_edit == "pago" else None,
-                    forma_pagamento_edit if status_edit == "pago" else None,
-                    servico_sel["id"]
-                ))
+                    """,
+                    (
+                        str(data_edit), rota_edit_id, agente_edit_id, placa_edit.strip(), str(hora_inicial_edit),
+                        str(hora_final_edit), total_horas_edit, valor_fixo_receber_edit, valor_fixo_pagar_edit,
+                        float(valor_extra_edit), float(pedagio_edit), total_receber_edit, total_pagar_edit,
+                        lucro_edit, observacao_edit.strip(), status_edit,
+                        str(data_pagamento_edit) if status_edit == "pago" else None,
+                        forma_pagamento_edit if status_edit == "pago" else None, servico_sel["id"]
+                    ),
+                )
                 conn.commit()
                 conn.close()
                 st.success("Lançamento atualizado com sucesso.")
@@ -537,85 +399,54 @@ if servicos:
     with aba2:
         st.write("Esse botão cria um novo lançamento igual ao selecionado.")
         st.write("O novo lançamento sai com status de pagamento pendente.")
-
         with st.form(f"form_duplicar_{servico_sel['id']}"):
             nova_data = st.date_input("Nova data do lançamento duplicado", value=date.today())
             manter_observacao = st.checkbox("Manter observação original", value=True)
             duplicar = st.form_submit_button("Duplicar lançamento")
-
             if duplicar:
                 rota_dup = mapa_rotas[servico_sel["rota_id"]]
                 hora_inicial_dup = parse_time(servico_sel["hora_inicial"])
                 hora_final_dup = parse_time(servico_sel["hora_final"])
-
                 total_horas_dup = calcular_total_horas(nova_data, hora_inicial_dup, hora_final_dup)
                 valor_fixo_receber_dup = float(rota_dup["valor_fixo_receber"])
                 valor_fixo_pagar_dup = float(rota_dup["valor_fixo_pagar"])
                 valor_extra_dup = float(servico_sel["valor_extra_recebido"] or 0)
                 pedagio_dup = float(servico_sel["pedagio_km_extra"] or 0)
-
                 total_receber_dup = valor_fixo_receber_dup + valor_extra_dup + pedagio_dup
                 total_pagar_dup = valor_fixo_pagar_dup
                 lucro_dup = total_receber_dup - total_pagar_dup
-
                 obs_dup = servico_sel["observacao"] if manter_observacao else ""
 
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO servicos (
-                        data_servico,
-                        rota_id,
-                        agente_id,
-                        placa_caminhao,
-                        hora_inicial,
-                        hora_final,
-                        total_horas,
-                        valor_fixo_receber,
-                        valor_fixo_pagar,
-                        valor_extra_recebido,
-                        pedagio_km_extra,
-                        total_receber,
-                        total_pagar,
-                        lucro,
-                        observacao,
-                        status_pagamento,
-                        data_pagamento,
-                        forma_pagamento
+                        data_servico, rota_id, agente_id, placa_caminhao, hora_inicial, hora_final,
+                        total_horas, valor_fixo_receber, valor_fixo_pagar, valor_extra_recebido,
+                        pedagio_km_extra, total_receber, total_pagar, lucro, observacao,
+                        status_pagamento, data_pagamento, forma_pagamento
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(nova_data),
-                    servico_sel["rota_id"],
-                    servico_sel["agente_id"],
-                    (servico_sel["placa_caminhao"] or "").strip(),
-                    str(hora_inicial_dup),
-                    str(hora_final_dup),
-                    total_horas_dup,
-                    valor_fixo_receber_dup,
-                    valor_fixo_pagar_dup,
-                    valor_extra_dup,
-                    pedagio_dup,
-                    total_receber_dup,
-                    total_pagar_dup,
-                    lucro_dup,
-                    (obs_dup or "").strip(),
-                    "pendente",
-                    None,
-                    None
-                ))
+                    """,
+                    (
+                        str(nova_data), servico_sel["rota_id"], servico_sel["agente_id"],
+                        (servico_sel["placa_caminhao"] or "").strip(), str(hora_inicial_dup),
+                        str(hora_final_dup), total_horas_dup, valor_fixo_receber_dup, valor_fixo_pagar_dup,
+                        valor_extra_dup, pedagio_dup, total_receber_dup, total_pagar_dup, lucro_dup,
+                        (obs_dup or "").strip(), "pendente", None, None
+                    ),
+                )
                 conn.commit()
                 conn.close()
                 st.success("Lançamento duplicado com sucesso.")
                 st.rerun()
 
     with aba3:
-        st.warning("A exclusão apaga esse lançamento do banco de dados.")
-
+        st.warning("A exclusão apaga esse lançamento do banco.")
         with st.form(f"form_excluir_{servico_sel['id']}"):
             confirmar = st.checkbox(f'Confirmo excluir o lançamento #{servico_sel["id"]}')
             excluir = st.form_submit_button("Excluir lançamento")
-
             if excluir:
                 if not confirmar:
                     st.error("Marque a confirmação antes de excluir.")
@@ -627,33 +458,39 @@ if servicos:
                     conn.close()
                     st.success("Lançamento excluído com sucesso.")
                     st.rerun()
+
+    with aba4:
+        if servico_sel["status_pagamento"] == "pago":
+            st.success("Esse lançamento já está pago.")
+            st.write(f'Data do pagamento: {servico_sel["data_pagamento"] or "-"}')
+            st.write(f'Forma de pagamento: {servico_sel["forma_pagamento"] or "-"}')
+        else:
+            st.warning("Esse lançamento está pendente.")
+            with st.form(f"form_pagar_{servico_sel['id']}"):
+                data_pagamento_ind = st.date_input("Data do pagamento", value=date.today())
+                forma_pagamento_ind = st.selectbox("Forma de pagamento", ["pix", "dinheiro", "transferência", "outro"])
+                confirmar_pagamento_ind = st.form_submit_button("Marcar lançamento como pago")
+                if confirmar_pagamento_ind:
+                    marcar_lancamento_como_pago(servico_sel["id"], data_pagamento_ind, forma_pagamento_ind)
+                    st.success("Lançamento marcado como pago com sucesso.")
+                    st.rerun()
 else:
     st.info("Nenhum lançamento salvo ainda.")
 
 st.divider()
-
-# =========================================================
-# FILTROS E BUSCA
-# =========================================================
 st.subheader("Filtros de consulta")
 
 hoje = date.today()
-
 if "mes_filtro" not in st.session_state:
     st.session_state["mes_filtro"] = hoje.month
-
 if "ano_filtro" not in st.session_state:
     st.session_state["ano_filtro"] = hoje.year
-
 if "status_filtro" not in st.session_state:
     st.session_state["status_filtro"] = "todos"
-
 if "agente_filtro" not in st.session_state:
     st.session_state["agente_filtro"] = 0
-
 if "rota_filtro" not in st.session_state:
     st.session_state["rota_filtro"] = 0
-
 if "placa_filtro" not in st.session_state:
     st.session_state["placa_filtro"] = ""
 
@@ -668,66 +505,25 @@ if st.button("🧹 Limpar filtros", use_container_width=True):
 
 f1, f2, f3 = st.columns(3)
 with f1:
-    mes_filtro = st.selectbox(
-        "Mês",
-        options=list(range(1, 13)),
-        format_func=lambda x: f"{x:02d}",
-        key="mes_filtro"
-    )
-
+    mes_filtro = st.selectbox("Mês", options=list(range(1, 13)), format_func=lambda x: f"{x:02d}", key="mes_filtro")
 with f2:
-    ano_filtro = st.number_input(
-        "Ano",
-        min_value=2020,
-        max_value=2100,
-        step=1,
-        key="ano_filtro"
-    )
-
+    ano_filtro = st.number_input("Ano", min_value=2020, max_value=2100, step=1, key="ano_filtro")
 with f3:
-    status_filtro = st.selectbox(
-        "Status do pagamento",
-        options=["todos", "pendente", "pago"],
-        key="status_filtro"
-    )
+    status_filtro = st.selectbox("Status do pagamento", options=["todos", "pendente", "pago"], key="status_filtro")
 
 f4, f5, f6 = st.columns(3)
-
 with f4:
     opcoes_agentes = [0] + [a["id"] for a in agentes]
-    agente_filtro = st.selectbox(
-        "Filtrar por agente",
-        options=opcoes_agentes,
-        format_func=lambda aid: "Todos" if aid == 0 else mapa_agentes[aid]["nome"],
-        key="agente_filtro"
-    )
-
+    agente_filtro = st.selectbox("Filtrar por agente", options=opcoes_agentes, format_func=lambda aid: "Todos" if aid == 0 else mapa_agentes[aid]["nome"], key="agente_filtro")
 with f5:
     opcoes_rotas = [0] + [r["id"] for r in rotas]
-    rota_filtro = st.selectbox(
-        "Filtrar por rota",
-        options=opcoes_rotas,
-        format_func=lambda rid: "Todas" if rid == 0 else mapa_rotas[rid]["nome_rota"],
-        key="rota_filtro"
-    )
-
+    rota_filtro = st.selectbox("Filtrar por rota", options=opcoes_rotas, format_func=lambda rid: "Todas" if rid == 0 else mapa_rotas[rid]["nome_rota"], key="rota_filtro")
 with f6:
     placa_filtro = st.text_input("Buscar por placa", key="placa_filtro")
 
-servicos_filtrados = buscar_servicos_filtrados(
-    mes=mes_filtro,
-    ano=ano_filtro,
-    agente_id=None if agente_filtro == 0 else agente_filtro,
-    rota_id=None if rota_filtro == 0 else rota_filtro,
-    status_pagamento=status_filtro,
-    placa=placa_filtro
-)
+servicos_filtrados = buscar_servicos_filtrados(mes_filtro, ano_filtro, None if agente_filtro == 0 else agente_filtro, None if rota_filtro == 0 else rota_filtro, status_filtro, placa_filtro)
 
 st.divider()
-
-# =========================================================
-# RESULTADOS
-# =========================================================
 st.subheader("Resultados da consulta")
 
 if servicos_filtrados:
@@ -742,32 +538,29 @@ if servicos_filtrados:
     k3.metric("Total a pagar", f"R$ {total_pagar_filtro:.2f}")
     k4.metric("Lucro", f"R$ {lucro_filtro:.2f}")
 
-    dados = []
-    for s in servicos_filtrados:
-        dados.append({
-            "ID": s["id"],
-            "Data": s["data_servico"],
-            "Rota": s["nome_rota"],
-            "Agente": s["nome_agente"],
-            "Placa": s["placa_caminhao"],
-            "Hora Inicial": s["hora_inicial"],
-            "Hora Final": s["hora_final"],
-            "Horas": s["total_horas"],
-            "Recebo Fixo": f'R$ {s["valor_fixo_receber"]:.2f}',
-            "Pago Fixo": f'R$ {s["valor_fixo_pagar"]:.2f}',
-            "Extra": f'R$ {s["valor_extra_recebido"]:.2f}',
-            "Pedágio/KM": f'R$ {s["pedagio_km_extra"]:.2f}',
-            "Total Receber": f'R$ {s["total_receber"]:.2f}',
-            "Total Pagar": f'R$ {s["total_pagar"]:.2f}',
-            "Lucro": f'R$ {s["lucro"]:.2f}',
-            "Pagamento": texto_status(s["status_pagamento"]),
-            "Data Pagamento": s["data_pagamento"],
-            "Forma Pagamento": s["forma_pagamento"],
-            "Observação": s["observacao"]
-        })
+    dados = [{
+        "ID": s["id"],
+        "Data": s["data_servico"],
+        "Rota": s["nome_rota"],
+        "Agente": s["nome_agente"],
+        "Placa": s["placa_caminhao"],
+        "Hora Inicial": s["hora_inicial"],
+        "Hora Final": s["hora_final"],
+        "Horas": s["total_horas"],
+        "Recebo Fixo": f'R$ {s["valor_fixo_receber"]:.2f}',
+        "Pago Fixo": f'R$ {s["valor_fixo_pagar"]:.2f}',
+        "Extra": f'R$ {s["valor_extra_recebido"]:.2f}',
+        "Pedágio/KM": f'R$ {s["pedagio_km_extra"]:.2f}',
+        "Total Receber": f'R$ {s["total_receber"]:.2f}',
+        "Total Pagar": f'R$ {s["total_pagar"]:.2f}',
+        "Lucro": f'R$ {s["lucro"]:.2f}',
+        "Pagamento": texto_status(s["status_pagamento"]),
+        "Data Pagamento": s["data_pagamento"],
+        "Forma Pagamento": s["forma_pagamento"],
+        "Observação": s["observacao"],
+    } for s in servicos_filtrados]
 
     st.dataframe(dados, use_container_width=True, hide_index=True)
-
     df_exportacao = pd.DataFrame(dados)
     arquivo_excel = gerar_excel_lancamentos(df_exportacao)
 
@@ -776,7 +569,7 @@ if servicos_filtrados:
         data=arquivo_excel,
         file_name=f"lancamentos_filtrados_{ano_filtro}_{mes_filtro:02d}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
+        use_container_width=True,
     )
 else:
     st.info("Nenhum lançamento encontrado com esses filtros.")
