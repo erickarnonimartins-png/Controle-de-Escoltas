@@ -1,7 +1,7 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
 from datetime import date
-from db import get_connection
+from db import get_connection, init_db
 
 st.set_page_config(
     page_title="Controle de Escoltas",
@@ -9,12 +9,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.logo("https://em-content.zobj.net/source/microsoft-teams/363/oncoming-automobile_1f698.png")
+init_db()
 
 st.sidebar.title("🚚 Controle de Escoltas")
-st.sidebar.write("Sistema interno de controle")
+st.sidebar.write("Sistema interno")
 st.sidebar.divider()
-st.sidebar.write("Use o menu para acessar:")
+st.sidebar.write("Menu:")
 st.sidebar.write("- Dashboard")
 st.sidebar.write("- Agentes")
 st.sidebar.write("- Rotas")
@@ -40,7 +40,7 @@ def buscar_resumo_geral(competencia):
         FROM servicos
         WHERE substr(data_servico, 1, 7) = ?
         """,
-        (competencia,)
+        (competencia,),
     ).fetchone()
     conn.close()
 
@@ -84,19 +84,15 @@ def buscar_ranking_agentes(competencia):
         GROUP BY a.nome
         ORDER BY quantidade_escoltas DESC, a.nome
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Agente": row["agente"],
-            "Qtd. Escoltas": int(row["quantidade_escoltas"] or 0),
-            "Total a Receber": round(float(row["total_receber_agente"] or 0), 2)
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Agente": row["agente"],
+        "Qtd. Escoltas": int(row["quantidade_escoltas"] or 0),
+        "Total a Receber": round(float(row["total_receber_agente"] or 0), 2),
+    } for row in rows])
 
 
 def buscar_ranking_rotas(competencia):
@@ -115,20 +111,16 @@ def buscar_ranking_rotas(competencia):
         GROUP BY r.nome_rota
         ORDER BY quantidade_servicos DESC, r.nome_rota
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Rota": row["rota"],
-            "Qtd. Serviços": int(row["quantidade_servicos"] or 0),
-            "Total Faturado": round(float(row["total_faturado"] or 0), 2),
-            "Lucro Total": round(float(row["lucro_total"] or 0), 2)
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Rota": row["rota"],
+        "Qtd. Serviços": int(row["quantidade_servicos"] or 0),
+        "Total Faturado": round(float(row["total_faturado"] or 0), 2),
+        "Lucro Total": round(float(row["lucro_total"] or 0), 2),
+    } for row in rows])
 
 
 def buscar_pagamentos_pendentes(competencia):
@@ -147,19 +139,15 @@ def buscar_pagamentos_pendentes(competencia):
         GROUP BY a.nome
         ORDER BY valor_pendente DESC, a.nome
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Agente": row["agente"],
-            "Qtd. Pendências": int(row["quantidade_pendencias"] or 0),
-            "Valor Pendente": round(float(row["valor_pendente"] or 0), 2)
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Agente": row["agente"],
+        "Qtd. Pendências": int(row["quantidade_pendencias"] or 0),
+        "Valor Pendente": round(float(row["valor_pendente"] or 0), 2),
+    } for row in rows])
 
 
 def buscar_escoltas_por_dia(competencia):
@@ -175,45 +163,27 @@ def buscar_escoltas_por_dia(competencia):
         GROUP BY data_servico
         ORDER BY data_servico
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Data": row["data_servico"],
-            "Escoltas": int(row["quantidade"] or 0)
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Data": row["data_servico"],
+        "Escoltas": int(row["quantidade"] or 0),
+    } for row in rows])
 
 
 hoje = date.today()
 
-st.info("Use o menu lateral para navegar entre os módulos do sistema.")
+st.info("Use o menu lateral para navegar entre os módulos.")
 
 c1, c2 = st.columns(2)
-
 with c1:
-    mes = st.selectbox(
-        "Mês",
-        options=list(range(1, 13)),
-        index=hoje.month - 1,
-        format_func=lambda x: f"{x:02d}"
-    )
-
+    mes = st.selectbox("Mês", options=list(range(1, 13)), index=hoje.month - 1, format_func=lambda x: f"{x:02d}")
 with c2:
-    ano = st.number_input(
-        "Ano",
-        min_value=2020,
-        max_value=2100,
-        value=hoje.year,
-        step=1
-    )
+    ano = st.number_input("Ano", min_value=2020, max_value=2100, value=hoje.year, step=1)
 
 competencia = f"{ano}-{mes:02d}"
-
 resumo = buscar_resumo_geral(competencia)
 qtd_agentes = buscar_qtd_agentes()
 qtd_rotas = buscar_qtd_rotas()
@@ -232,7 +202,6 @@ m7.metric("Rotas ativas", qtd_rotas)
 st.divider()
 
 st.subheader("Escoltas por dia")
-
 df_dia = buscar_escoltas_por_dia(competencia)
 
 if not df_dia.empty:
@@ -263,7 +232,6 @@ with col_b:
 st.divider()
 
 st.subheader("Pagamentos pendentes")
-
 df_pendentes = buscar_pagamentos_pendentes(competencia)
 
 if not df_pendentes.empty:
