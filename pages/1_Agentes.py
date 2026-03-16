@@ -1,7 +1,8 @@
 import streamlit as st
-from db import get_connection
+from db import get_connection, init_db
 
 st.set_page_config(page_title="Agentes", page_icon="👮")
+init_db()
 st.title("👮 Cadastro de Agentes")
 
 
@@ -15,17 +16,14 @@ def carregar_agentes():
     """).fetchall()
     conn.close()
 
-    return [
-        {
-            "id": row["id"],
-            "nome": row["nome"],
-            "telefone": row["telefone"] or "",
-            "pix": row["pix"] or "",
-            "observacao": row["observacao"] or "",
-            "ativo": row["ativo"],
-        }
-        for row in rows
-    ]
+    return [{
+        "id": row["id"],
+        "nome": row["nome"],
+        "telefone": row["telefone"] or "",
+        "pix": row["pix"] or "",
+        "observacao": row["observacao"] or "",
+        "ativo": row["ativo"],
+    } for row in rows]
 
 
 def contar_servicos_do_agente(agente_id):
@@ -51,10 +49,6 @@ m2.metric("Ativos", ativos)
 m3.metric("Inativos", inativos)
 
 st.divider()
-
-# =========================================================
-# NOVO AGENTE
-# =========================================================
 st.subheader("Novo agente")
 
 with st.form("form_novo_agente", clear_on_submit=True):
@@ -65,7 +59,6 @@ with st.form("form_novo_agente", clear_on_submit=True):
     ativo = st.checkbox("Ativo", value=True)
 
     salvar = st.form_submit_button("Salvar agente")
-
     if salvar:
         if not nome.strip():
             st.error("Digite o nome do agente.")
@@ -77,13 +70,7 @@ with st.form("form_novo_agente", clear_on_submit=True):
                 INSERT INTO agentes (nome, telefone, pix, observacao, ativo)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (
-                    nome.strip(),
-                    telefone.strip(),
-                    pix.strip(),
-                    observacao.strip(),
-                    1 if ativo else 0
-                )
+                (nome.strip(), telefone.strip(), pix.strip(), observacao.strip(), 1 if ativo else 0)
             )
             conn.commit()
             conn.close()
@@ -91,28 +78,18 @@ with st.form("form_novo_agente", clear_on_submit=True):
             st.rerun()
 
 st.divider()
-
-# =========================================================
-# EDITAR / EXCLUIR
-# =========================================================
 st.subheader("Gerenciar agente")
 
 if agentes:
     ids_agentes = [a["id"] for a in agentes]
-
     agente_id_sel = st.selectbox(
         "Escolha um agente",
         options=ids_agentes,
         format_func=lambda aid: f'#{mapa_agentes[aid]["id"]} | {mapa_agentes[aid]["nome"]}'
     )
-
     agente_sel = mapa_agentes[agente_id_sel]
-
     aba1, aba2 = st.tabs(["✏️ Editar", "🗑️ Excluir"])
 
-    # -------------------------
-    # EDITAR
-    # -------------------------
     with aba1:
         with st.form(f"form_editar_agente_{agente_sel['id']}"):
             nome_edit = st.text_input("Nome do agente", value=agente_sel["nome"])
@@ -122,7 +99,6 @@ if agentes:
             ativo_edit = st.checkbox("Ativo", value=(agente_sel["ativo"] == 1))
 
             salvar_edicao = st.form_submit_button("Salvar alterações")
-
             if salvar_edicao:
                 if not nome_edit.strip():
                     st.error("Digite o nome do agente.")
@@ -135,52 +111,30 @@ if agentes:
                         SET nome = ?, telefone = ?, pix = ?, observacao = ?, ativo = ?
                         WHERE id = ?
                         """,
-                        (
-                            nome_edit.strip(),
-                            telefone_edit.strip(),
-                            pix_edit.strip(),
-                            observacao_edit.strip(),
-                            1 if ativo_edit else 0,
-                            agente_sel["id"]
-                        )
+                        (nome_edit.strip(), telefone_edit.strip(), pix_edit.strip(), observacao_edit.strip(), 1 if ativo_edit else 0, agente_sel["id"])
                     )
                     conn.commit()
                     conn.close()
                     st.success("Agente atualizado com sucesso.")
                     st.rerun()
 
-    # -------------------------
-    # EXCLUIR
-    # -------------------------
     with aba2:
         qtd_servicos = contar_servicos_do_agente(agente_sel["id"])
-
         if qtd_servicos > 0:
-            st.warning(
-                f'Esse agente possui {qtd_servicos} serviço(s) vinculado(s). '
-                'Por segurança, não exclua. O ideal é marcar como inativo.'
-            )
-
+            st.warning(f'Esse agente possui {qtd_servicos} serviço(s) vinculado(s). O ideal é marcar como inativo.')
             if st.button("Marcar como inativo", key=f"inativar_{agente_sel['id']}"):
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute(
-                    "UPDATE agentes SET ativo = 0 WHERE id = ?",
-                    (agente_sel["id"],)
-                )
+                cur.execute("UPDATE agentes SET ativo = 0 WHERE id = ?", (agente_sel["id"],))
                 conn.commit()
                 conn.close()
                 st.success("Agente marcado como inativo.")
                 st.rerun()
         else:
-            st.warning("A exclusão apaga esse agente do banco de dados.")
-
+            st.warning("A exclusão apaga esse agente do banco.")
             with st.form(f"form_excluir_agente_{agente_sel['id']}"):
-                confirmar = st.checkbox(
-                    f'Confirmo excluir o agente "{agente_sel["nome"]}"'
-                )
+                confirmar = st.checkbox(f'Confirmo excluir o agente "{agente_sel["nome"]}"')
                 excluir = st.form_submit_button("Excluir agente")
-
                 if excluir:
                     if not confirmar:
                         st.error("Marque a confirmação antes de excluir.")
@@ -196,26 +150,18 @@ else:
     st.info("Nenhum agente cadastrado ainda.")
 
 st.divider()
-
-# =========================================================
-# LISTAGEM
-# =========================================================
 st.subheader("Agentes cadastrados")
 
 agentes = carregar_agentes()
-
 if agentes:
-    dados = []
-    for agente in agentes:
-        dados.append({
-            "ID": agente["id"],
-            "Nome": agente["nome"],
-            "Telefone": agente["telefone"],
-            "PIX": agente["pix"],
-            "Observação": agente["observacao"],
-            "Status": "Ativo" if agente["ativo"] == 1 else "Inativo"
-        })
-
+    dados = [{
+        "ID": a["id"],
+        "Nome": a["nome"],
+        "Telefone": a["telefone"],
+        "PIX": a["pix"],
+        "Observação": a["observacao"],
+        "Status": "Ativo" if a["ativo"] == 1 else "Inativo"
+    } for a in agentes]
     st.dataframe(dados, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhum agente cadastrado ainda.")
