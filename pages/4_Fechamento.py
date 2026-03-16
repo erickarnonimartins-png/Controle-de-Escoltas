@@ -2,29 +2,26 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import date
-from db import get_connection
+from db import get_connection, init_db
 
 st.set_page_config(page_title="Fechamento Mensal", page_icon="📊")
+init_db()
 st.title("📊 Fechamento Mensal")
 
 
 def gerar_excel_fechamento(df_resumo, df_agentes, df_rotas, df_detalhes):
     output = BytesIO()
-
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_resumo.to_excel(writer, sheet_name="Resumo", index=False)
         df_agentes.to_excel(writer, sheet_name="Por Agente", index=False)
         df_rotas.to_excel(writer, sheet_name="Por Rota", index=False)
         df_detalhes.to_excel(writer, sheet_name="Lancamentos", index=False)
-
     output.seek(0)
     return output.getvalue()
 
 
 def texto_status(status):
-    if status == "pago":
-        return "🟢 Pago"
-    return "🔴 Pendente"
+    return "🟢 Pago" if status == "pago" else "🔴 Pendente"
 
 
 def carregar_agentes_pendentes(competencia):
@@ -39,10 +36,9 @@ def carregar_agentes_pendentes(competencia):
           AND s.status_pagamento = 'pendente'
         ORDER BY a.nome
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
-
     return [{"id": row["id"], "nome": row["nome"]} for row in rows]
 
 
@@ -60,10 +56,9 @@ def buscar_resumo_geral(competencia):
         FROM servicos
         WHERE substr(data_servico, 1, 7) = ?
         """,
-        (competencia,)
+        (competencia,),
     ).fetchone()
     conn.close()
-
     return {
         "total_escoltas": int(row["total_escoltas"] or 0),
         "total_receber": float(row["total_receber"] or 0),
@@ -91,22 +86,21 @@ def buscar_resumo_agentes(competencia):
         GROUP BY a.nome
         ORDER BY quantidade_escoltas DESC, a.nome
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
     dados = []
     for row in rows:
-        valor_pendente = round(float(row["valor_pendente"] or 0), 2)
-
+        vp = round(float(row["valor_pendente"] or 0), 2)
         dados.append({
             "Agente": row["agente"],
             "Qtd. Escoltas": int(row["quantidade_escoltas"] or 0),
             "Total Horas": round(float(row["total_horas"] or 0), 2),
             "Total a Receber": round(float(row["total_a_receber_agente"] or 0), 2),
             "Valor Pago": round(float(row["valor_pago"] or 0), 2),
-            "Valor Pendente": valor_pendente,
-            "Status": "🔴 Pendente" if valor_pendente > 0 else "🟢 Pago"
+            "Valor Pendente": vp,
+            "Status": "🔴 Pendente" if vp > 0 else "🟢 Pago"
         })
 
     return pd.DataFrame(dados)
@@ -129,21 +123,17 @@ def buscar_resumo_rotas(competencia):
         GROUP BY r.nome_rota
         ORDER BY quantidade_servicos DESC, r.nome_rota
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Rota": row["rota"],
-            "Qtd. Serviços": int(row["quantidade_servicos"] or 0),
-            "Total Faturado": round(float(row["total_faturado"] or 0), 2),
-            "Total Pago": round(float(row["total_pago"] or 0), 2),
-            "Lucro Total": round(float(row["lucro_total"] or 0), 2),
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Rota": row["rota"],
+        "Qtd. Serviços": int(row["quantidade_servicos"] or 0),
+        "Total Faturado": round(float(row["total_faturado"] or 0), 2),
+        "Total Pago": round(float(row["total_pago"] or 0), 2),
+        "Lucro Total": round(float(row["lucro_total"] or 0), 2),
+    } for row in rows])
 
 
 def buscar_detalhes(competencia):
@@ -152,58 +142,41 @@ def buscar_detalhes(competencia):
     rows = cur.execute(
         """
         SELECT
-            s.data_servico,
-            r.nome_rota,
-            a.nome AS agente,
-            s.placa_caminhao,
-            s.hora_inicial,
-            s.hora_final,
-            s.total_horas,
-            s.valor_fixo_receber,
-            s.valor_fixo_pagar,
-            s.valor_extra_recebido,
-            s.pedagio_km_extra,
-            s.total_receber,
-            s.total_pagar,
-            s.lucro,
-            s.status_pagamento,
-            s.data_pagamento,
-            s.forma_pagamento,
-            s.observacao
+            s.data_servico, r.nome_rota, a.nome AS agente, s.placa_caminhao,
+            s.hora_inicial, s.hora_final, s.total_horas, s.valor_fixo_receber,
+            s.valor_fixo_pagar, s.valor_extra_recebido, s.pedagio_km_extra,
+            s.total_receber, s.total_pagar, s.lucro, s.status_pagamento,
+            s.data_pagamento, s.forma_pagamento, s.observacao
         FROM servicos s
         INNER JOIN rotas r ON s.rota_id = r.id
         INNER JOIN agentes a ON s.agente_id = a.id
         WHERE substr(s.data_servico, 1, 7) = ?
         ORDER BY s.data_servico DESC, s.id DESC
         """,
-        (competencia,)
+        (competencia,),
     ).fetchall()
     conn.close()
 
-    dados = []
-    for row in rows:
-        dados.append({
-            "Data": row["data_servico"],
-            "Rota": row["nome_rota"],
-            "Agente": row["agente"],
-            "Placa": row["placa_caminhao"],
-            "Hora Inicial": row["hora_inicial"],
-            "Hora Final": row["hora_final"],
-            "Horas": round(float(row["total_horas"] or 0), 2),
-            "Recebo Fixo": round(float(row["valor_fixo_receber"] or 0), 2),
-            "Pago Fixo": round(float(row["valor_fixo_pagar"] or 0), 2),
-            "Extra": round(float(row["valor_extra_recebido"] or 0), 2),
-            "Pedágio/KM": round(float(row["pedagio_km_extra"] or 0), 2),
-            "Total Receber": round(float(row["total_receber"] or 0), 2),
-            "Total Pagar": round(float(row["total_pagar"] or 0), 2),
-            "Lucro": round(float(row["lucro"] or 0), 2),
-            "Pagamento": texto_status(row["status_pagamento"]),
-            "Data Pagamento": row["data_pagamento"],
-            "Forma Pagamento": row["forma_pagamento"],
-            "Observação": row["observacao"],
-        })
-
-    return pd.DataFrame(dados)
+    return pd.DataFrame([{
+        "Data": row["data_servico"],
+        "Rota": row["nome_rota"],
+        "Agente": row["agente"],
+        "Placa": row["placa_caminhao"],
+        "Hora Inicial": row["hora_inicial"],
+        "Hora Final": row["hora_final"],
+        "Horas": round(float(row["total_horas"] or 0), 2),
+        "Recebo Fixo": round(float(row["valor_fixo_receber"] or 0), 2),
+        "Pago Fixo": round(float(row["valor_fixo_pagar"] or 0), 2),
+        "Extra": round(float(row["valor_extra_recebido"] or 0), 2),
+        "Pedágio/KM": round(float(row["pedagio_km_extra"] or 0), 2),
+        "Total Receber": round(float(row["total_receber"] or 0), 2),
+        "Total Pagar": round(float(row["total_pagar"] or 0), 2),
+        "Lucro": round(float(row["lucro"] or 0), 2),
+        "Pagamento": texto_status(row["status_pagamento"]),
+        "Data Pagamento": row["data_pagamento"],
+        "Forma Pagamento": row["forma_pagamento"],
+        "Observação": row["observacao"],
+    } for row in rows])
 
 
 def marcar_pendencias_como_pagas(agente_id, competencia, data_pagamento, forma_pagamento):
@@ -219,12 +192,7 @@ def marcar_pendencias_como_pagas(agente_id, competencia, data_pagamento, forma_p
           AND substr(data_servico, 1, 7) = ?
           AND status_pagamento = 'pendente'
         """,
-        (
-            str(data_pagamento),
-            forma_pagamento,
-            agente_id,
-            competencia
-        )
+        (str(data_pagamento), forma_pagamento, agente_id, competencia),
     )
     conn.commit()
     conn.close()
@@ -233,127 +201,78 @@ def marcar_pendencias_como_pagas(agente_id, competencia, data_pagamento, forma_p
 hoje = date.today()
 
 col1, col2 = st.columns(2)
-
 with col1:
-    mes = st.selectbox(
-        "Mês",
-        options=list(range(1, 13)),
-        index=hoje.month - 1,
-        format_func=lambda x: f"{x:02d}"
-    )
-
+    mes = st.selectbox("Mês", options=list(range(1, 13)), index=hoje.month - 1, format_func=lambda x: f"{x:02d}")
 with col2:
-    ano = st.number_input(
-        "Ano",
-        min_value=2020,
-        max_value=2100,
-        value=hoje.year,
-        step=1
-    )
+    ano = st.number_input("Ano", min_value=2020, max_value=2100, value=hoje.year, step=1)
 
 competencia = f"{ano}-{mes:02d}"
-
 agentes_pendentes = carregar_agentes_pendentes(competencia)
-mapa_agentes_pendentes = {a["id"]: a for a in agentes_pendentes}
+mapa = {a["id"]: a for a in agentes_pendentes}
 
 if agentes_pendentes:
     st.subheader("Baixar pagamento de agente")
-
-    ids_agentes_pendentes = [a["id"] for a in agentes_pendentes]
-
+    ids = [a["id"] for a in agentes_pendentes]
     with st.form("form_pagamento_agente"):
-        agente_id_sel = st.selectbox(
-            "Agente com pendências",
-            options=ids_agentes_pendentes,
-            format_func=lambda aid: mapa_agentes_pendentes[aid]["nome"]
-        )
-
+        agente_id_sel = st.selectbox("Agente com pendências", options=ids, format_func=lambda aid: mapa[aid]["nome"])
         data_pagamento = st.date_input("Data do pagamento", value=hoje)
-
-        forma_pagamento = st.selectbox(
-            "Forma de pagamento",
-            ["pix", "dinheiro", "transferência", "outro"]
-        )
-
-        confirmar_pagamento = st.form_submit_button("Marcar pendências do agente como pagas")
-
-        if confirmar_pagamento:
-            marcar_pendencias_como_pagas(
-                agente_id=agente_id_sel,
-                competencia=competencia,
-                data_pagamento=data_pagamento,
-                forma_pagamento=forma_pagamento
-            )
-            st.success(f'Pendências de {mapa_agentes_pendentes[agente_id_sel]["nome"]} marcadas como pagas.')
+        forma_pagamento = st.selectbox("Forma de pagamento", ["pix", "dinheiro", "transferência", "outro"])
+        confirmar = st.form_submit_button("Marcar pendências do agente como pagas")
+        if confirmar:
+            marcar_pendencias_como_pagas(agente_id_sel, competencia, data_pagamento, forma_pagamento)
+            st.success(f'Pendências de {mapa[agente_id_sel]["nome"]} marcadas como pagas.')
             st.rerun()
 else:
     st.info("Não há pagamentos pendentes para este mês.")
 
 st.divider()
-
-resumo_geral = buscar_resumo_geral(competencia)
+resumo = buscar_resumo_geral(competencia)
 
 st.subheader(f"Resumo geral - {competencia}")
-
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Total de escoltas", resumo_geral["total_escoltas"])
-m2.metric("Total a receber", f'R$ {resumo_geral["total_receber"]:.2f}')
-m3.metric("Total pago", f'R$ {resumo_geral["total_pago"]:.2f}')
-m4.metric("Total pendente", f'R$ {resumo_geral["total_pendente"]:.2f}')
-m5.metric("Lucro total", f'R$ {resumo_geral["lucro_total"]:.2f}')
+m1.metric("Total de escoltas", resumo["total_escoltas"])
+m2.metric("Total a receber", f'R$ {resumo["total_receber"]:.2f}')
+m3.metric("Total pago", f'R$ {resumo["total_pago"]:.2f}')
+m4.metric("Total pendente", f'R$ {resumo["total_pendente"]:.2f}')
+m5.metric("Lucro total", f'R$ {resumo["lucro_total"]:.2f}')
 
 st.divider()
-
 st.subheader("Resumo por agente")
-
 df_agentes = buscar_resumo_agentes(competencia)
-
 if not df_agentes.empty:
     st.dataframe(df_agentes, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhum lançamento encontrado para este mês.")
 
 st.divider()
-
 st.subheader("Resumo por rota")
-
 df_rotas = buscar_resumo_rotas(competencia)
-
 if not df_rotas.empty:
     st.dataframe(df_rotas, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhuma rota encontrada para este mês.")
 
 st.divider()
-
 st.subheader("Lançamentos do mês")
-
 df_detalhes = buscar_detalhes(competencia)
-
 if not df_detalhes.empty:
     st.dataframe(df_detalhes, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhum lançamento detalhado para este mês.")
 
 st.divider()
-
 st.subheader("Exportação")
 
 df_resumo = pd.DataFrame([{
     "Competência": competencia,
-    "Total de Escoltas": resumo_geral["total_escoltas"],
-    "Total a Receber": round(resumo_geral["total_receber"], 2),
-    "Total Pago": round(resumo_geral["total_pago"], 2),
-    "Total Pendente": round(resumo_geral["total_pendente"], 2),
-    "Lucro Total": round(resumo_geral["lucro_total"], 2),
+    "Total de Escoltas": resumo["total_escoltas"],
+    "Total a Receber": round(resumo["total_receber"], 2),
+    "Total Pago": round(resumo["total_pago"], 2),
+    "Total Pendente": round(resumo["total_pendente"], 2),
+    "Lucro Total": round(resumo["lucro_total"], 2),
 }])
 
-arquivo_excel = gerar_excel_fechamento(
-    df_resumo=df_resumo,
-    df_agentes=df_agentes,
-    df_rotas=df_rotas,
-    df_detalhes=df_detalhes
-)
+arquivo_excel = gerar_excel_fechamento(df_resumo=df_resumo, df_agentes=df_agentes, df_rotas=df_rotas, df_detalhes=df_detalhes)
 
 st.download_button(
     label="📥 Baixar fechamento em Excel",
