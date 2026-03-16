@@ -1,20 +1,25 @@
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
+from db import get_database_url, init_db
 
 st.set_page_config(page_title="Backup", page_icon="💾")
+init_db()
 st.title("💾 Backup do Banco de Dados")
 
 DB_PATH = Path("data") / "escolta.db"
+database_url = get_database_url()
 
-st.write("Aqui você pode baixar uma cópia completa do banco de dados do sistema.")
+if database_url:
+    st.info("Seu sistema está usando banco online (Supabase/Postgres).")
+    st.warning("O backup deste banco deve ser feito pelo painel do Supabase. Esta tela baixa apenas o banco local SQLite.")
+else:
+    st.write("Aqui você pode baixar uma cópia completa do banco de dados do sistema.")
 
 if DB_PATH.exists():
     tamanho_bytes = DB_PATH.stat().st_size
     ultima_modificacao = datetime.fromtimestamp(DB_PATH.stat().st_mtime)
-
     tamanho_kb = round(tamanho_bytes / 1024, 2)
-    tamanho_mb = round(tamanho_bytes / (1024 * 1024), 2)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Arquivo", DB_PATH.name)
@@ -29,18 +34,12 @@ if DB_PATH.exists():
     nome_backup = f'escolta_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db'
 
     st.download_button(
-        label="📥 Baixar backup do banco",
+        label="📥 Baixar backup do banco local",
         data=db_bytes,
         file_name=nome_backup,
         mime="application/octet-stream",
         use_container_width=True
     )
-
-    st.divider()
-
-    st.subheader("Informações importantes")
-    st.write("- Esse arquivo contém todos os agentes, rotas e lançamentos.")
-    st.write("- Guarde esse backup em local seguro.")
-    st.write("- Faça backup sempre antes de alterações importantes no sistema.")
 else:
-    st.error("O arquivo do banco de dados não foi encontrado em data\\escolta.db")
+    if not database_url:
+        st.error("O arquivo do banco de dados não foi encontrado em data\\escolta.db")
